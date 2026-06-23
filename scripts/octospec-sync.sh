@@ -140,4 +140,49 @@ else
   fi
 fi
 
+# 3) Materialize repo-root scaffolding that tools only discover at the root.
+# The template tree carries .octospec/.claude/ (slash commands + skills) and
+# .octospec/.github/PULL_REQUEST_TEMPLATE.md, but Claude Code only discovers
+# slash commands/skills under the REPO ROOT .claude/, and GitHub only applies a
+# PR template at the REPO ROOT .github/. So copy these out of .octospec/ to the
+# root — install-if-missing only: an existing destination file is left untouched
+# so hand-written customizations are never clobbered. This makes the whole step
+# idempotent (a second run reports everything already present).
+#
+# install_missing SRC_DIR DEST_DIR LABEL — copy every file under SRC_DIR into
+# DEST_DIR (mirroring subpaths), skipping any destination file that exists.
+install_missing() {
+  src_dir="$1"; dest_dir="$2"; label="$3"
+  [ -d "$src_dir" ] || return 0
+  installed=0; skipped=0
+  while IFS= read -r src; do
+    rel="${src#"$src_dir"/}"
+    dest="$dest_dir/$rel"
+    if [ -e "$dest" ]; then
+      skipped=$((skipped + 1))
+    else
+      mkdir -p "$(dirname "$dest")"
+      cp "$src" "$dest"
+      installed=$((installed + 1))
+    fi
+  done <<EOF
+$(find "$src_dir" -type f)
+EOF
+  echo "octospec: $label -> installed $installed, kept $skipped existing"
+}
+
+install_missing "$OCTOSPEC_DIR/.claude" "$REPO_ROOT/.claude" ".claude (slash commands + skills)"
+
+PRT_SRC="$OCTOSPEC_DIR/.github/PULL_REQUEST_TEMPLATE.md"
+PRT_DEST="$REPO_ROOT/.github/PULL_REQUEST_TEMPLATE.md"
+if [ -f "$PRT_SRC" ]; then
+  if [ -e "$PRT_DEST" ]; then
+    echo "octospec: .github/PULL_REQUEST_TEMPLATE.md -> kept existing"
+  else
+    mkdir -p "$REPO_ROOT/.github"
+    cp "$PRT_SRC" "$PRT_DEST"
+    echo "octospec: .github/PULL_REQUEST_TEMPLATE.md -> installed"
+  fi
+fi
+
 echo "octospec: done."

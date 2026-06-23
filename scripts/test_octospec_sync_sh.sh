@@ -322,4 +322,130 @@ if [ "$fail" -eq 0 ]; then
 else
   echo "version-assertion test: FAIL"
 fi
+
+# ---------------------------------------------------------------------------
+# Root scaffolding materialization (YUJ-5579 GAP-2/GAP-3): the template tree
+# carries .octospec/.claude/ (slash commands + skills) and
+# .octospec/.github/PULL_REQUEST_TEMPLATE.md, but Claude Code only discovers
+# slash commands/skills under the REPO ROOT .claude/ and GitHub only applies a
+# PR template at the REPO ROOT .github/. Sync must materialize those out of
+# .octospec/ to the root, install-if-missing (never clobber user edits), and be
+# idempotent. Reproduce the documented quickstart (cp template -> .octospec).
+tmp8="$(mktemp -d)"; TMP_DIRS+=("$tmp8")
+cd "$tmp8"
+git init -q
+cp -r "$REPO/templates/octospec-init" .octospec
+
+set +e
+GLOBAL_SRC="$REPO" ./.octospec/scripts/octospec-sync.sh > out.log 2>&1
+code8=$?
+set -e
+
+if [ "$code8" -eq 0 ]; then
+  note ok "root-scaffolding sync exits 0"
+else
+  note FAIL "root-scaffolding sync exited $code8"; fail=1
+  cat out.log
+fi
+
+# GAP-2: slash commands discoverable at the repo root.
+if [ -f .claude/commands/octospec-plan.md ] \
+   && [ -f .claude/commands/octospec-go.md ] \
+   && [ -f .claude/commands/octospec-check.md ] \
+   && [ -f .claude/commands/octospec-finish.md ]; then
+  note ok "slash commands materialized to repo-root .claude/commands/"
+else
+  note FAIL "repo-root .claude/commands/octospec-* missing after sync"; fail=1
+fi
+
+# GAP-2: workflow skill discoverable at the repo root too.
+if [ -f .claude/skills/octospec-workflow/SKILL.md ]; then
+  note ok "workflow skill materialized to repo-root .claude/skills/"
+else
+  note FAIL "repo-root .claude/skills/ missing after sync"; fail=1
+fi
+
+# GAP-3: PR template installed at the repo root where GitHub looks for it.
+if [ -f .github/PULL_REQUEST_TEMPLATE.md ]; then
+  note ok "PR template materialized to repo-root .github/PULL_REQUEST_TEMPLATE.md"
+else
+  note FAIL "repo-root .github/PULL_REQUEST_TEMPLATE.md missing after sync"; fail=1
+fi
+
+# GAP-3: the installed PR template matches the canonical source (no drift).
+if cmp -s "$REPO/templates/PULL_REQUEST_TEMPLATE.md" .github/PULL_REQUEST_TEMPLATE.md; then
+  note ok "installed PR template matches canonical templates/PULL_REQUEST_TEMPLATE.md"
+else
+  note FAIL "installed PR template differs from canonical source"; fail=1
+fi
+
+# Idempotency: a second run installs nothing new and still exits 0.
+before_claude="$(find .claude -type f | sort | xargs -I{} md5sum {} 2>/dev/null)"
+before_prt="$(md5sum .github/PULL_REQUEST_TEMPLATE.md)"
+set +e
+GLOBAL_SRC="$REPO" ./.octospec/scripts/octospec-sync.sh > out2.log 2>&1
+code8b=$?
+set -e
+after_claude="$(find .claude -type f | sort | xargs -I{} md5sum {} 2>/dev/null)"
+after_prt="$(md5sum .github/PULL_REQUEST_TEMPLATE.md)"
+if [ "$code8b" -eq 0 ] && [ "$before_claude" = "$after_claude" ] && [ "$before_prt" = "$after_prt" ]; then
+  note ok "root-scaffolding sync is idempotent (second run changes nothing)"
+else
+  note FAIL "root-scaffolding sync not idempotent (code=$code8b)"; fail=1
+fi
+if grep -q "kept 6 existing" out2.log && grep -q "PULL_REQUEST_TEMPLATE.md -> kept existing" out2.log; then
+  note ok "idempotent second run reports existing files kept"
+else
+  note FAIL "second run did not report kept-existing scaffolding"; fail=1
+fi
+
+cd "$REPO"
+
+# No-clobber: a user's own slash command + PR template survive sync, while
+# missing siblings are still installed.
+tmp9="$(mktemp -d)"; TMP_DIRS+=("$tmp9")
+cd "$tmp9"
+git init -q
+cp -r "$REPO/templates/octospec-init" .octospec
+mkdir -p .claude/commands .github
+printf 'MY CUSTOM PLAN KEEP ME\n' > .claude/commands/octospec-plan.md
+printf 'MY OWN PR TEMPLATE KEEP ME\n' > .github/PULL_REQUEST_TEMPLATE.md
+
+set +e
+GLOBAL_SRC="$REPO" ./.octospec/scripts/octospec-sync.sh > out.log 2>&1
+code9=$?
+set -e
+
+if [ "$code9" -eq 0 ]; then
+  note ok "no-clobber sync exits 0"
+else
+  note FAIL "no-clobber sync exited $code9"; fail=1
+  cat out.log
+fi
+
+if grep -q "MY CUSTOM PLAN KEEP ME" .claude/commands/octospec-plan.md; then
+  note ok "user's customized slash command left untouched"
+else
+  note FAIL "sync clobbered a user-customized slash command"; fail=1
+fi
+
+if grep -q "MY OWN PR TEMPLATE KEEP ME" .github/PULL_REQUEST_TEMPLATE.md; then
+  note ok "user's own PR template left untouched"
+else
+  note FAIL "sync clobbered a user-owned PR template"; fail=1
+fi
+
+if [ -f .claude/commands/octospec-go.md ] && [ -f .claude/commands/octospec-finish.md ]; then
+  note ok "missing slash commands still installed alongside the user's own"
+else
+  note FAIL "sync skipped installing missing slash commands"; fail=1
+fi
+
+cd "$REPO"
+
+if [ "$fail" -eq 0 ]; then
+  echo "root-scaffolding materialization test: PASS"
+else
+  echo "root-scaffolding materialization test: FAIL"
+fi
 exit "$fail"

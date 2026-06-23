@@ -50,9 +50,14 @@ cp -r <path-to>/octo-spec/templates/octospec-init .octospec
 
 Edit `.octospec/manifest.yaml`:
 - Pin the global ("constitution") version you inherit:
-  `inherits: octo-spec@<semver>` — use the version of the octo-spec checkout you
-  are syncing from (this repo ships `VERSION=1.1.0`, so e.g.
-  `inherits: octo-spec@1.1.0`).
+  `inherits: octo-spec@<semver>` — use the exact version of the octo-spec
+  checkout you are syncing from. Read it from that checkout's `VERSION` file
+  (`cat <path-to>/octo-spec/VERSION`) rather than hardcoding a number here, so
+  this instruction never drifts when octo-spec bumps its version. For example,
+  if `VERSION` says `1.2.0`, set `inherits: octo-spec@1.2.0`. The pin must match
+  the `GLOBAL_SRC` checkout's `VERSION` exactly or `octospec-sync.sh` fails the
+  version assertion. The template manifest already ships pinned to this
+  checkout's version, so when you sync from the same checkout no edit is needed.
 - Set `tier` (default `repo` — the global layer lives in octo-spec itself).
 - Set `owner` to the team or person responsible for this repo's `.octospec/`.
 
@@ -68,8 +73,19 @@ GLOBAL_SRC=/path/to/octo-spec ./.octospec/scripts/octospec-sync.sh
 
 This vendors the pinned global rules into the git-ignored cache
 `.octospec/_global/` (the script adds `_global/` to `.octospec/.gitignore`
-automatically) AND writes the shared agent-instruction block into the
-agent-instruction files present in the repo.
+automatically), writes the shared agent-instruction block into the
+agent-instruction files present in the repo, AND materializes the repo-root
+scaffolding that tools only discover at the root:
+- copies `.octospec/.claude/` to the repo root `.claude/` so Claude Code finds
+  the slash commands (`/octospec-plan`, `/octospec-go`, `/octospec-check`,
+  `/octospec-finish`) and the workflow skill, and
+- copies `.octospec/.github/PULL_REQUEST_TEMPLATE.md` to `.github/` so GitHub
+  applies the PR template (the body the Finish phase pre-fills).
+
+This step is **install-if-missing**: any `.claude/` or `.github/` file you have
+already customized at the root is left untouched, and re-running sync is
+idempotent. Commit the materialized root `.claude/` and `.github/` so teammates
+get them on a plain `git pull`.
 
 ### 4. Confirm the agent-instruction block landed
 
